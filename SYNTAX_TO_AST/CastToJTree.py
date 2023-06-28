@@ -158,6 +158,8 @@ class SyntaxToAST:
 
     def v_FuncCall(self,node):
         return JTree.FuncCall(self.v_node(node.name),self.v_node(node.args))
+    
+
 
     def v_FuncDecl(self,node):
         args = []
@@ -197,7 +199,7 @@ class SyntaxToAST:
         return JTree.Label(node.name,self.v_node(node.stmt),node.coord)
 
     def v_NamedInitializer(self,node):
-        return JTree.NamedInit([self.v_node(n) for n in node.name],self.v_node(node.expr))
+        return JTree.NamedInit([self.v_node(n) for n in node.name],self.v_node(node.expr),node.coord)
 
     def v_ParamList(self,node):
         if (node == None) or (node.params == None):
@@ -244,6 +246,7 @@ class SyntaxToAST:
             if (nameANDtype.name == None) or (nameANDtype.init != None):
                 raise NotImplementedError
             newstruct.members.update({nameANDtype.name:nameANDtype.type})
+        newstruct.UpdateSize()
         return newstruct
 
     def v_StructRef(self,node):
@@ -267,6 +270,10 @@ class SyntaxToAST:
         return self.v_type(node.type)
 
     def v_UnaryOp(self,node):
+        if node.op == "-":
+            if self.nodename(node.expr) == "Constant" and str(node.expr.type) == "int":
+                return JTree.Constant(str(node.expr.type),'-'+node.expr.value,node.expr.coord)
+
         return JTree.UnaryOp(node.op,self.v_node(node.expr),node.coord)
 
     def v_Union(self,node):

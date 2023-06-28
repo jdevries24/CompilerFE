@@ -76,12 +76,13 @@ class arrayType:
 
     def __init__(self,rtype,length):
         self.rtype = rtype
-        self.length = length
+        self.length = 0
         self.qual = "arr"
         self.size = 0
         self.isvarible = True
         if length != None:
-            self.size = self.length.value * rtype.size
+            self.length = int(length.value)
+            self.size = self.length * rtype.size
             self.isvarible = False
 
     def show(self,offset,shownStack = []):
@@ -109,7 +110,10 @@ class structType:
         self.size = 0
         self.members = members
         self.qual = "struct"
-        for mem in self.members:
+
+    def UpdateSize(self):
+        self.size = 0
+        for mem in self.members.values():
             self.size += mem.size
 
     def show(self,offset,shownStack = []):
@@ -143,8 +147,11 @@ class unionType:
         self.size = 0
         self.members = members
         self.qual = "union"
-        for mem in self.members:
-            self.size = max(self.size,mem.size)
+
+    def updatesize(self):
+        self.size = 0
+        for mem in self.members.values():
+            self.size = max(mem.size,self.size)
 
     def show(self,offset,shownStack = []):
         _PRINTLINE(offset,str(self) + ":")
