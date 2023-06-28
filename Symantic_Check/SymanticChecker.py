@@ -1,10 +1,15 @@
+from SYNTAX_TO_AST.Jtype import pointerType
 class SymanticError(Exception):
 
     def __init__(self,message,cords):
         self.message = message
-        self.line = cords.line
-        self.col = cords.column
-        self.file = cords.file
+        self.line = 0
+        self.col = 0
+        self.file = ""
+        if cords is not None:
+            self.line = cords.line
+            self.col = cords.column
+            self.file = cords.file
 
 class Symantic_Checker:
 
@@ -13,6 +18,7 @@ class Symantic_Checker:
         self.currentType = None
         self.returnType = None
         self.fordepth = 0
+        self.inswitch = False
         self.errors = []
         self.lookup = {
             "Assignment":self.v_Assignemnt,"ArrayRef":self.v_ArrayRef,"Alignas":self.v_Alignas,
@@ -56,7 +62,15 @@ class Symantic_Checker:
             return True
         if consttype == "int":
             if not self.checkIsInt(self.currentType) and node is not None:
-                raise SymanticError(str(self.currentType) + "is Not a interger",node.cords)
+                raise SymanticError(str(self.currentType) + " is Not a interger",node.cords)
+        if consttype == "string":
+            baseType = self.getbase(self.currentType)
+            if baseType.qual not in ["ptr","arr"]:
+                raise SymanticError("String litteral not aproprate here",node.cords)
+            basechartype = self.getbase(baseType.rtype)
+            if str(basechartype) not in ["char","unsigned char"]:
+                raise SymanticError("String type literal not aproprate here",node.cords)
+
             
     def getbase(self,property):
         while(property.qual == "syth"):
@@ -108,10 +122,17 @@ class Symantic_Checker:
         self.v_Node(node.right)
     
     def v_Break(self,node):
-        raise NotImplementedError
+        if self.inswitch or self.fordepth > 0:
+            return
+        raise SymanticError("Improper break",node.cords)
     
-    def v_Case(self,node):
-        raise NotImplementedError
+    def v_Case(self,node,fromSwitch = False):
+        if fromSwitch:
+            self.v_Node(node.expr)
+            if node.stmts is not None:
+                oldtype = self.currentType
+                self.v_ExprList(node.stmts)
+                self.currentType = oldtype
     
     def v_Cast(self,node):
         self.currentType = None
@@ -125,7 +146,9 @@ class Symantic_Checker:
         self.v_ExprList(node.exprs)
     
     def v_Continue(self,node):
-        raise NotImplementedError
+        if self.fordepth == 0:
+            raise SymanticError("Continue outside of loop",node.cords)
+        
     
     def v_Decl(self,node):
         self.SymbolStack[-1].update({node.name:node.type})
@@ -137,7 +160,9 @@ class Symantic_Checker:
         raise NotImplementedError
     
     def v_DoWhile(self,node):
-        raise NotImplementedError
+        self.currentType = None
+        self.v_Node(node.cond)
+        self.v_ExprList(node.stmts)
     
     def v_EllipsParm(self,node):
         pass
@@ -200,10 +225,66 @@ class Symantic_Checker:
         self.checktype(propertys,node)
     
     def v_InitList(self,node):
-        raise NotImplementedError
+        if (self.currentType is None):
+            raise SymanticError("Trying to init without a type",node.cords)
+        basetype = self.getbase(self.currentType)
+        if basetype.qual in ["arr","ptr"]:
+            self.v_ArrayInit(node)
+        elif basetype.qual in ["struct","union"]:
+            self.v_StructInit(node)
+
+    def v_StructInit(self,node):
+        basetype = self.getbase(self.currentType)
+        if node.inits == []:
+            return
+        oldtype = self.currentType
+        self.currentType = basetype
+        if node.inits[0].nodeName == "NamedInit":
+            self.v_NamedStructInit(node)
+        else:
+            self.v_UnamedStructInit(node)
+        self.currentType = oldtype
+        
+    def v_NamedStructInit(self,node):
+        for items in node.inits:
+            if items.nodeName != "NamedInit":
+                raise SymanticError("No mixing decl types")
+            self.v_NamedInit(items,True)
+
+    def v_UnamedStructInit(self,node):
+        if len(node.inits) != len(self.currentType.members):
+            if len(node.inits) > len(self.currentType.members):
+                raise SymanticError("To much items defined",node.cords)
+            raise SymanticError("Not enough items defined")
+        oldtype = self.currentType
+        for item,type in zip(node.inits,oldtype.members.values()):
+            self.currentType = type
+            self.v_Node(item)
+
     
-    def v_NamedInit(self,node):
-        raise NotImplementedError
+    def v_ArrayInit(self,node):
+        oldtype = self.currentType
+        basetype = self.getbase(self.currentType)
+        lookingtype = basetype.rtype
+        for val in node.inits:
+            self.currentType = lookingtype
+            self.v_Node(val)
+        self.currentType = oldtype
+
+    
+    def v_NamedInit(self,node,fromStructInit = False):
+        if fromStructInit:
+            if len(node.name) == 0:
+                raise SymanticError("Needs a name",node.cords)
+            name = node.name[0].name
+            if name not in self.currentType.members:
+                raise SymanticError("Struct/Union has no member "+name,node.cords)
+            oldtype = self.currentType
+            self.currentType = oldtype.members[name]
+            self.v_Node(node.expr)
+            self.currentType = oldtype
+        else:
+            raise SymanticError("Unexpected Named Init",node.cords)
     
     def v_IfNode(self,node):
         self.v_Node(node.cond)
@@ -242,16 +323,63 @@ class Symantic_Checker:
         self.checktype(structprops.members[field],node)
     
     def v_Switch(self,node):
-        raise NotImplementedError
+        oldt = self.currentType
+        self.currentType = None
+        self.v_Node(node.cond)
+        self.inswitch = True
+        if node.stmts is not None:
+            for items in node.stmts:
+                if items.nodeName == "Case":
+                    self.v_Case(items,True)
+                elif items.nodeName == "Default":
+                    oldoldtype = self.currentType
+                    if items.stmts is not None:
+                        self.v_ExprList(items.stmts)
+                    self.currentType = None
+        self.inswitch = False
+        self.currentType = oldt
     
     def v_TernaryOp(self,node):
-        raise NotImplementedError
+        oldtype = self.currentType
+        self.v_Node(node.cond)
+        self.currentType = oldtype
+        self.v_Node(node.iftrue)
+        self.v_Node(node.iffalse)
     
     def v_UnaryOp(self,node):
-        raise NotImplementedError
+        if node.op in ["p++","p--","--","++","-"]:
+            self.v_Node(node.expr)
+            if not self.checkIsInt(self.currentType):
+                raise SymanticError("No arithmitic on non math objects")
+        elif node.op == "&":
+            if node.expr.nodeName != "ID":
+                raise SymanticError("No Addressing random items")
+            oldtype = self.currentType
+            self.currentType = None
+            self.v_Node(node.expr)
+            PT = pointerType(self.currentType)
+            self.currentType = oldtype
+            self.checktype(PT,node)
+        elif node.op == "*":
+            oldtype = self.currentType
+            self.currentType = None
+            self.v_Node(node.expr)
+            if self.currentType.qual != "ptr":
+                raise SymanticError("Attempting to deref a non pointer",node.cords)
+            RT = self.currentType.rtype
+            self.currentType = oldtype
+            self.checktype(RT,node)
+        elif node.op == "sizeof":
+            print(node.expr.size)
+        else:
+            raise NotImplementedError
     
     def v_While(self,node):
-        raise NotImplementedError
+        self.currentType = None
+        self.v_Node(node.cond)
+        self.fordepth += 1
+        self.v_ExprList(node.body)
+        self.fordepth -= 1
     
     def v_Node(self,node):
         if node is None:
